@@ -9,6 +9,8 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <build_depend>lsb-release</build_depend>
+
   <depend>camera_info_manager</depend>
   <depend>flir_camera_msgs</depend>
   <depend>image_transport</depend>
