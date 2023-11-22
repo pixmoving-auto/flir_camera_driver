@@ -106,7 +106,7 @@ CameraDriver::NodeInfo::NodeInfo(const std::string & n, const std::string & node
   }
 }
 
-const char BASE_RESIZE_RECT_TOPIC_NAME[] = "rect_resize/image_raw";
+const char BASE_RESIZE_RECT_TOPIC_NAME[] = "~/rect_resize/image_raw";
 
 CameraDriver::CameraDriver(const rclcpp::NodeOptions & options) : Node("cam_sync", options),
 m_rect_resie_image_msg(new sensor_msgs::msg::Image()),
@@ -560,7 +560,7 @@ void CameraDriver::doPublish(const ImageConstPtr & im)
   cameraInfoMsg_.header.stamp = t;
 
   bool canEncode{false};
-  const std::string encoding = flir_to_ros_encoding(im->pixelFormat_, &canEncode);
+  std::string encoding = flir_to_ros_encoding(im->pixelFormat_, &canEncode);
   if (!canEncode) {
     RCLCPP_WARN_STREAM(
       get_logger(), "no ROS encoding for pixel format "
@@ -568,8 +568,8 @@ void CameraDriver::doPublish(const ImageConstPtr & im)
     return;
   }
 
-  if (pub_.getNumSubscribers() > 0) {
-    sensor_msgs::msg::CameraInfo::UniquePtr cinfo(new sensor_msgs::msg::CameraInfo(cameraInfoMsg_));
+  if (pub_.getNumSubscribers() > 0 || m_rect_resie_image_publisher->getNumSubscribers() > 0) {
+    sensor_msgs::msg::CameraInfo::SharedPtr cinfo(new sensor_msgs::msg::CameraInfo(cameraInfoMsg_));
     // will make deep copy. Do we need to? Probably...
     sensor_msgs::msg::Image::SharedPtr img(new sensor_msgs::msg::Image(imageMsg_));
     bool ret =
@@ -582,7 +582,15 @@ void CameraDriver::doPublish(const ImageConstPtr & im)
       {
         try {
           cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(img, encoding);
-          image_raw_ = cv_ptr->image.clone();
+          if(encoding=="bayer_rggb8"){
+            cv::Mat rawImage = cv_ptr->image.clone();
+            cv::cvtColor(rawImage, image_raw_, cv::COLOR_BayerRG2BGR);
+
+            encoding = "rgb8";
+            img = cv_bridge::CvImage(std_msgs::msg::Header(), encoding, image_raw_).toImageMsg();
+          }else{
+            image_raw_ = cv_ptr->image.clone();
+          }
         } catch (cv_bridge::Exception& e) {
           // 错误处理
           std::cerr << "cv_bridge exception: " << e.what() << std::endl;
@@ -628,7 +636,7 @@ void CameraDriver::doPublish(const ImageConstPtr & im)
       // rect -----------------
 
       // const auto t0 = this->now();
-      pub_.publish(std::move(img), std::move(cinfo));
+      pub_.publish(*img, *cinfo);
       // const auto t1 = this->now();
       // std::cout << "dt: " << (t1 - t0).nanoseconds() * 1e-9 << std::endl;
       publishedCount_++;
