@@ -120,14 +120,8 @@ private:
   rclcpp::Time lastStatusTime_;
   int qosDepth_{4};
 private:
-  sensor_msgs::msg::Image::SharedPtr m_rect_resie_image_msg;
-  sensor_msgs::msg::CameraInfo::SharedPtr m_rect_resie_camera_info_msg;
-  std::shared_ptr<image_transport::CameraPublisher> m_rect_resie_image_publisher;
-
-  bool is_get_camera_info_=true;
-
-  cv::Mat image_raw_;
-  cv::Mat image_rect_;
+  image_transport::CameraPublisher rect_resie_image_pub_;
+  sensor_msgs::msg::CameraInfo RectResizecameraInfoMsg_;
 
   cv::Mat undistort_map_x_, undistort_map_y_;
   uint8_t image_resize_=1;

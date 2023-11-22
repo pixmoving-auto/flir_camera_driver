@@ -106,14 +106,8 @@ CameraDriver::NodeInfo::NodeInfo(const std::string & n, const std::string & node
   }
 }
 
-const char BASE_RESIZE_RECT_TOPIC_NAME[] = "~/rect_resize/image_raw";
 
-CameraDriver::CameraDriver(const rclcpp::NodeOptions & options) : Node("cam_sync", options),
-m_rect_resie_image_msg(new sensor_msgs::msg::Image()),
-m_rect_resie_camera_info_msg(new sensor_msgs::msg::CameraInfo()),
-m_rect_resie_image_publisher(std::make_shared<image_transport::CameraPublisher>(
-      image_transport::create_camera_publisher(this, BASE_RESIZE_RECT_TOPIC_NAME,
-      rclcpp::QoS {100}.get_rmw_qos_profile())))
+CameraDriver::CameraDriver(const rclcpp::NodeOptions & options) : Node("cam_sync", options)
 {
   image_resize_ = this->declare_parameter("image_resize", 1);
   if(image_resize_<=0){
@@ -134,7 +128,6 @@ CameraDriver::~CameraDriver()
 {
   stop();
   wrapper_.reset();  // invoke destructor
-  m_rect_resie_camera_info_msg.reset();
 }
 
 bool CameraDriver::stop()
@@ -558,6 +551,7 @@ void CameraDriver::doPublish(const ImageConstPtr & im)
     adjustTimeStamp_ ? getAdjustedTimeStamp(im->time_, im->imageTime_) : rclcpp::Time(im->time_);
   imageMsg_.header.stamp = t;
   cameraInfoMsg_.header.stamp = t;
+  RectResizecameraInfoMsg_.header.stamp = t;
 
   bool canEncode{false};
   std::string encoding = flir_to_ros_encoding(im->pixelFormat_, &canEncode);
@@ -568,80 +562,72 @@ void CameraDriver::doPublish(const ImageConstPtr & im)
     return;
   }
 
-  if (pub_.getNumSubscribers() > 0 || m_rect_resie_image_publisher->getNumSubscribers() > 0) {
-    sensor_msgs::msg::CameraInfo::SharedPtr cinfo(new sensor_msgs::msg::CameraInfo(cameraInfoMsg_));
+  if (pub_.getNumSubscribers() > 0 || rect_resie_image_pub_.getNumSubscribers() > 0) {
+      // const auto t1 = this->now();
+      // std::cout << "dt: " << (t1 - t0).nanoseconds() * 1e-9 << std::endl;
+      publishedCount_++;
+  }
+
+  if (pub_.getNumSubscribers() > 0) {
+    sensor_msgs::msg::CameraInfo::UniquePtr cinfo(new sensor_msgs::msg::CameraInfo(cameraInfoMsg_));
     // will make deep copy. Do we need to? Probably...
     sensor_msgs::msg::Image::SharedPtr img(new sensor_msgs::msg::Image(imageMsg_));
+    bool ret =
+      sensor_msgs::fillImage(*img, encoding, im->height_, im->width_, im->stride_, im->data_);
+
+    if (!ret) {
+      RCLCPP_ERROR_STREAM(get_logger(), "fill image failed!");
+    } else {
+      cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(img, encoding);
+      if(encoding=="bayer_rggb8"){
+          cv::Mat rawImage = cv_ptr->image;
+          cv::Mat outputImage;
+          cv::cvtColor(rawImage, outputImage, cv::COLOR_BayerRG2BGR);
+          encoding = "rgb8";
+          img = cv_bridge::CvImage(imageMsg_.header, encoding, outputImage).toImageMsg();
+        }
+      // const auto t0 = this->now();
+      pub_.publish(std::move(img), std::move(cinfo));
+    }
+  }
+
+  // rect -----------------
+  if (rect_resie_image_pub_.getNumSubscribers() > 0) {
+    sensor_msgs::msg::Image::SharedPtr img(new sensor_msgs::msg::Image(imageMsg_));
+    sensor_msgs::msg::CameraInfo::UniquePtr cinfo(new sensor_msgs::msg::CameraInfo(RectResizecameraInfoMsg_));
+
     bool ret =
       sensor_msgs::fillImage(*img, encoding, im->height_, im->width_, im->stride_, im->data_);
     if (!ret) {
       RCLCPP_ERROR_STREAM(get_logger(), "fill image failed!");
     } else {
 
-      // rect -----------------
       {
         try {
+          cv::Mat image_raw_out;
           cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(img, encoding);
           if(encoding=="bayer_rggb8"){
-            cv::Mat rawImage = cv_ptr->image.clone();
-            cv::cvtColor(rawImage, image_raw_, cv::COLOR_BayerRG2BGR);
-
+            cv::Mat rawImage = cv_ptr->image;
+            cv::cvtColor(rawImage, image_raw_out, cv::COLOR_BayerRG2BGR);
             encoding = "rgb8";
-            img = cv_bridge::CvImage(std_msgs::msg::Header(), encoding, image_raw_).toImageMsg();
           }else{
-            image_raw_ = cv_ptr->image.clone();
+            image_raw_out = cv_ptr->image;
           }
+          cv::Mat image_rect_out;
+          cv::remap(image_raw_out, image_rect_out, undistort_map_x_, undistort_map_y_, cv::INTER_LINEAR);
+          img = cv_bridge::CvImage(imageMsg_.header, encoding, image_rect_out).toImageMsg();
+          
+          // const auto t0 = this->now();
+          rect_resie_image_pub_.publish(std::move(img), std::move(cinfo));
         } catch (cv_bridge::Exception& e) {
           // 错误处理
           std::cerr << "cv_bridge exception: " << e.what() << std::endl;
         }
-
-        // 获取内参和畸变
-        if(is_get_camera_info_){
-          cv::Mat camera_matrix;
-          cv::Mat distortion_coefficients;
-
-          camera_matrix = cv::Mat(3, 3, CV_64F, const_cast<double *>(cinfo->k.data()));
-          distortion_coefficients = cv::Mat(1, cinfo->d.size(), CV_64F, const_cast<double *>(cinfo->d.data()));
-
-          cv::Size size(cinfo->width, cinfo->height);
-          cv::Size resize(cinfo->width/image_resize_, cinfo->height/image_resize_);
-
-          cv::Mat new_K = cv::getOptimalNewCameraMatrix(camera_matrix, distortion_coefficients, size, 0, resize);
-
-          cv::initUndistortRectifyMap(
-            camera_matrix, distortion_coefficients, cv::Mat(), 
-            new_K, resize, CV_32FC1, undistort_map_x_, undistort_map_y_);
-
-          *m_rect_resie_camera_info_msg = *cinfo;
-          m_rect_resie_camera_info_msg->d.resize(5); 
-          std::array<double, 12UL> p = m_rect_resie_camera_info_msg->p;
-          p[0] =  m_rect_resie_camera_info_msg->k[0];
-          p[2] =  m_rect_resie_camera_info_msg->k[2];
-          p[5] =  m_rect_resie_camera_info_msg->k[4];
-          p[6] =  m_rect_resie_camera_info_msg->k[5];
-          m_rect_resie_camera_info_msg->p = p;
-          
-          is_get_camera_info_ = false;
-        }
-
-        cv::remap(image_raw_, image_rect_, undistort_map_x_, undistort_map_y_, cv::INTER_LINEAR);
-        m_rect_resie_image_msg = cv_bridge::CvImage(std_msgs::msg::Header(), encoding, image_rect_).toImageMsg();
-
-        m_rect_resie_camera_info_msg->header = img->header;
-        m_rect_resie_image_msg->header = img->header;
-        m_rect_resie_image_publisher->publish(*m_rect_resie_image_msg, *m_rect_resie_camera_info_msg);
       }
-      
-      // rect -----------------
-
-      // const auto t0 = this->now();
-      pub_.publish(*img, *cinfo);
-      // const auto t1 = this->now();
-      // std::cout << "dt: " << (t1 - t0).nanoseconds() * 1e-9 << std::endl;
-      publishedCount_++;
     }
   }
+  // rect -----------------
+
   if (metaPub_->get_subscription_count() != 0) {
     metaMsg_.header.stamp = t;
     metaMsg_.brightness = im->brightness_;
@@ -697,6 +683,33 @@ bool CameraDriver::start()
   cameraInfoMsg_.header.frame_id = frameId_;
   metaMsg_.header.frame_id = frameId_;
 
+  // 获取内参和畸变
+  {
+    cv::Mat camera_matrix;
+    cv::Mat distortion_coefficients;
+    
+    camera_matrix = cv::Mat(3, 3, CV_64F, const_cast<double *>(cameraInfoMsg_.k.data()));
+    distortion_coefficients = cv::Mat(1, cameraInfoMsg_.d.size(), CV_64F, const_cast<double *>(cameraInfoMsg_.d.data()));
+
+    cv::Size size(cameraInfoMsg_.width, cameraInfoMsg_.height);
+    cv::Size resize(cameraInfoMsg_.width/image_resize_, cameraInfoMsg_.height/image_resize_);
+
+    cv::Mat new_K = cv::getOptimalNewCameraMatrix(camera_matrix, distortion_coefficients, size, 0, resize);
+
+    cv::initUndistortRectifyMap(
+      camera_matrix, distortion_coefficients, cv::Mat(), 
+      new_K, resize, CV_32FC1, undistort_map_x_, undistort_map_y_);
+
+    RectResizecameraInfoMsg_ = cameraInfoMsg_;
+    RectResizecameraInfoMsg_.d.resize(5); 
+    std::array<double, 12UL> p = RectResizecameraInfoMsg_.p;
+    p[0] =  RectResizecameraInfoMsg_.k[0];
+    p[2] =  RectResizecameraInfoMsg_.k[2];
+    p[5] =  RectResizecameraInfoMsg_.k[4];
+    p[6] =  RectResizecameraInfoMsg_.k[5];
+    RectResizecameraInfoMsg_.p = p;
+  }
+  
   rmw_qos_profile_t qosProf = rmw_qos_profile_default;
   qosProf.history = RMW_QOS_POLICY_HISTORY_KEEP_LAST;
   qosProf.depth = qosDepth_;  // keep at most this number of images
@@ -713,6 +726,8 @@ bool CameraDriver::start()
   qosProf.liveliness_lease_duration.nsec = 0;
 
   pub_ = image_transport::create_camera_publisher(this, "~/image_raw", qosProf);
+  rect_resie_image_pub_ = image_transport::create_camera_publisher(this, "~/rect_resize/image_raw", qosProf);
+  
   wrapper_ = std::make_shared<spinnaker_camera_driver::SpinnakerWrapper>();
   wrapper_->setDebug(debug_);
   wrapper_->setComputeBrightness(computeBrightness_);
