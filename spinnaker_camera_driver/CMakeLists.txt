@@ -74,7 +74,10 @@ set(ROS_DEPENDENCIES
   "std_msgs"
   "camera_info_manager"
   "image_transport"
-  "flir_camera_msgs")
+  "flir_camera_msgs"
+  "image_transport_plugins"
+  "cv_bridge"
+  )
 
 
 # find dependencies
@@ -85,6 +88,8 @@ foreach(pkg ${ROS_DEPENDENCIES})
   find_package(${pkg} REQUIRED)
 endforeach()
 find_package(yaml-cpp REQUIRED)
+
+find_package(OpenCV REQUIRED)
 
 #
 # shared library for composable node
@@ -99,8 +104,13 @@ add_library(camera_driver SHARED
   src/genicam_utils.cpp
 )
 
+target_include_directories(camera_driver PUBLIC
+  "include"
+  ${OpenCV_INCLUDE_DIRS}
+)
+
 ament_target_dependencies(camera_driver PUBLIC ${ROS_DEPENDENCIES})
-target_link_libraries(camera_driver PUBLIC Spinnaker::Spinnaker PRIVATE yaml-cpp)
+target_link_libraries(camera_driver PUBLIC Spinnaker::Spinnaker PRIVATE yaml-cpp ${OpenCV_LIBRARIES})
 
 target_include_directories(camera_driver
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

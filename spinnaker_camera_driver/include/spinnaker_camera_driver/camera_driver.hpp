@@ -32,6 +32,9 @@
 #include <std_msgs/msg/float64.hpp>
 #include <thread>
 
+#include <opencv2/opencv.hpp>
+#include "cv_bridge/cv_bridge.h"
+
 namespace spinnaker_camera_driver
 {
 class CameraDriver : public rclcpp::Node
@@ -116,6 +119,19 @@ private:
   uint32_t queuedCount_{0};
   rclcpp::Time lastStatusTime_;
   int qosDepth_{4};
+private:
+  sensor_msgs::msg::Image::SharedPtr m_rect_resie_image_msg;
+  sensor_msgs::msg::CameraInfo::SharedPtr m_rect_resie_camera_info_msg;
+  std::shared_ptr<image_transport::CameraPublisher> m_rect_resie_image_publisher;
+
+  bool is_get_camera_info_=true;
+
+  cv::Mat image_raw_;
+  cv::Mat image_rect_;
+
+  cv::Mat undistort_map_x_, undistort_map_y_;
+  uint8_t image_resize_=1;
+
 };
 }  // namespace spinnaker_camera_driver
 #endif  // SPINNAKER_CAMERA_DRIVER__CAMERA_DRIVER_HPP_
