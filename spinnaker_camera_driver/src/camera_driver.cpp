@@ -675,8 +675,8 @@ bool CameraDriver::start()
   infoManager_ =
     std::make_shared<camera_info_manager::CameraInfoManager>(this, get_name(), cameraInfoURL_);
   controlSub_ = this->create_subscription<flir_camera_msgs::msg::CameraControl>(
-    "~/control", 10, std::bind(&CameraDriver::controlCallback, this, std::placeholders::_1));
-  metaPub_ = create_publisher<flir_camera_msgs::msg::ImageMetaData>("~/meta", 1);
+    "control", 10, std::bind(&CameraDriver::controlCallback, this, std::placeholders::_1));
+  metaPub_ = create_publisher<flir_camera_msgs::msg::ImageMetaData>("meta", 1);
 
   cameraInfoMsg_ = infoManager_->getCameraInfo();
   imageMsg_.header.frame_id = frameId_;
@@ -725,8 +725,8 @@ bool CameraDriver::start()
   qosProf.liveliness_lease_duration.sec = 10;  // time to declare client dead
   qosProf.liveliness_lease_duration.nsec = 0;
 
-  pub_ = image_transport::create_camera_publisher(this, "~/image_raw", qosProf);
-  rect_resie_image_pub_ = image_transport::create_camera_publisher(this, "~/rect_resize/image_raw", qosProf);
+  pub_ = image_transport::create_camera_publisher(this, "image_raw", qosProf);
+  rect_resie_image_pub_ = image_transport::create_camera_publisher(this, "rect_resize/image_raw", qosProf);
   
   wrapper_ = std::make_shared<spinnaker_camera_driver::SpinnakerWrapper>();
   wrapper_->setDebug(debug_);
