@@ -702,12 +702,6 @@ bool CameraDriver::start()
 
     RectResizecameraInfoMsg_ = cameraInfoMsg_;
     RectResizecameraInfoMsg_.d.resize(5); 
-    std::array<double, 12UL> p = RectResizecameraInfoMsg_.p;
-    p[0] =  RectResizecameraInfoMsg_.k[0];
-    p[2] =  RectResizecameraInfoMsg_.k[2];
-    p[5] =  RectResizecameraInfoMsg_.k[4];
-    p[6] =  RectResizecameraInfoMsg_.k[5];
-    RectResizecameraInfoMsg_.p = p;
   }
   
   rmw_qos_profile_t qosProf = rmw_qos_profile_default;
